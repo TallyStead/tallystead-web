@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+
+  publish:
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/tallystead-web
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate immutable semantic release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            echo "Release tags must be semantic and start with v." >&2
+            exit 1
+          fi
+          package_version="$(node -p "require('./package.json').version")"
+          if [[ "${VERSION}" != "v${package_version}" ]]; then
+            echo "Tag ${VERSION} does not match package.json version ${package_version}." >&2
+            exit 1
+          fi
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "IMAGE=ghcr.io/${owner}/tallystead-web" >> "${GITHUB_ENV}"
+      - name: Build release image
+        run: docker build --tag tallystead-web:release .
+      - name: Scan release image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: tallystead-web:release
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Generate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: tallystead-web:release
+          format: cyclonedx
+          output: tallystead-web.cdx.json
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+      - name: Confirm version is unused and publish image
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${VERSION#v}"
+          remote="${IMAGE}:${tag}"
+          if output="$(docker manifest inspect "${remote}" 2>&1)"; then
+            echo "${remote} already exists; release images are immutable." >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'manifest unknown|not found' <<<"${output}"; then
+            printf '%s\n' "${output}" >&2
+            echo "Could not safely confirm that ${remote} is unused." >&2
+            exit 1
+          fi
+          docker tag tallystead-web:release "${remote}"
+          output="$(docker push "${remote}")"
+          printf '%s\n' "${output}"
+          digest="$(printf '%s\n' "${output}" | awk '/digest: sha256:/{print $3}' | tail -1)"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not determine the published image digest." >&2
+            exit 1
+          fi
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          printf '%s@%s\n' "${IMAGE}" "${digest}" > tallystead-web-image.txt
+      - name: Attest image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.publish.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+      - name: Create draft release with immutable image reference
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "${VERSION}"
+          tallystead-web.cdx.json
+          tallystead-web-image.txt
+          --draft
+          --generate-notes
+          --title "Tallystead Web ${VERSION}"
+

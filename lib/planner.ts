@@ -1,0 +1,28 @@
+export type PlannerAccount = { account_id: string; name: string; balance_minor: number };
+export type PlannerTimelineItem = { item_type: string; item_id: string | null; name: string; event_date: string; amount_minor: number; projected_balance_minor: number; confidence_percent: number | null; explanation: string };
+export type PlannerReserve = { bill_instance_id: string; name: string; due_date: string; required_minor: number; funded_minor: number; shortfall_minor: number; status: "funded" | "shortfall"; explanation: string };
+export type PlannerShortfall = { event_date: string; amount_minor: number; obligation_name: string; explanation: string };
+export type PlannerForecast = {
+  snapshot_id: string | null;
+  rule_version: string;
+  input_hash: string;
+  as_of_date: string;
+  horizon_date: string;
+  currency_code: string;
+  include_pending: boolean;
+  cash_buffer_minor: number;
+  planning_balance_minor: number;
+  available_to_plan_minor: number;
+  safe_to_spend_minor: number;
+  reserved_now_minor: number;
+  expected_income_minor: number;
+  required_outflow_minor: number;
+  ending_balance_minor: number;
+  accounts: PlannerAccount[];
+  excluded_accounts: string[];
+  timeline: PlannerTimelineItem[];
+  reserves: PlannerReserve[];
+  shortfalls: PlannerShortfall[];
+  warnings: string[];
+  assumptions: string[];
+};

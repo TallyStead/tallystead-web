@@ -2,6 +2,17 @@
 
 All notable changes to the independently released Tallystead browser client are recorded here.
 
+## [0.2.1] - Unreleased
+
+### Changed
+
+- Server networking is now a read-only operational view of environment-owned URLs, proxy trust, forwarded authentication, certificate state, service health, and sanitized request diagnostics.
+- Removed browser controls for staging, testing, applying, and rolling back Caddy configuration so web settings cannot make the server unreachable.
+
+### Compatibility
+
+- Requires the corresponding `0.2.1` server network-status contract.
+
 ## [0.2.0] - Unreleased
 
 ### Added
@@ -10,9 +21,7 @@ All notable changes to the independently released Tallystead browser client are 
 - Review-queue search, selection, and bulk-review interaction improvements.
 - Principal-entry support when resolving imported loan or debt payments.
 - Display support for debt balance anchors, as-of dates, category-rule names, and match labels.
-- A Server-settings preset for the supported Pangolin shared-network deployment.
 - Existing-member Pangolin SSO discovery and sign-in, plus an explicit forwarded-identity control in trusted reverse-proxy settings.
-- An owner-only current-connection view showing direct/proxy routing, effective addresses, trust status, and sanitized request headers.
 - A server-backed transaction search, filtering, page-size, total-count, and pagination workspace that can navigate beyond the legacy 500-row list.
 - An accessible transaction detail and editing modal with previous/next navigation through the current filtered page, keyboard arrows outside form fields, Escape close, focus containment, and mobile full-screen treatment.
 - Server-backed standard and transfer review queues with search, filtering, page sizing, totals, pagination, and explicitly page-scoped compatible-row bulk selection.

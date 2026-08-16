@@ -2,6 +2,8 @@
 
 Tallystead Web is the browser client for the local-first, self-hosted Tallystead household finance server. It connects to a server URL supplied by the household, following the same client/server model used by self-hosted home applications.
 
+See [CHANGELOG.md](CHANGELOG.md) for versioned browser-client changes and server compatibility notes.
+
 The server remains authoritative for authentication, permissions, financial calculations, records, documents, automation, and local AI. This repository contains presentation and client interaction code only.
 
 ## Requirements
@@ -54,4 +56,3 @@ Read [SECURITY.md](SECURITY.md) before reporting a vulnerability. Never attach r
 ## License
 
 Tallystead Web is licensed under the [GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`).
-

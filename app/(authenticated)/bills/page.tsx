@@ -3,8 +3,9 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useAppSession } from "../../../components/app-shell";
 import { EmptyState, Notice, Panel, Pill } from "../../../components/ui";
+import TransactionPicker from "../../../components/transaction-picker";
 import { apiRequest } from "../../../lib/client";
-import { Account, minorUnits, money, Transaction } from "../../../lib/ledger";
+import { Account, minorUnits, money } from "../../../lib/ledger";
 import {
   BillInstance,
   BillProfile,
@@ -64,7 +65,6 @@ export default function BillsPage() {
   const [events, setEvents] = useState<IncomeEvent[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
   const [calendar, setCalendar] = useState<CalendarItem[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -75,7 +75,7 @@ export default function BillsPage() {
     [serverUrl, session.access_token],
   );
   const load = useCallback(async () => {
-    const [p, i, s, e, d, c, t, a] = await Promise.all([
+    const [p, i, s, e, d, c, a] = await Promise.all([
       request<BillProfile[]>("/v1/obligations/bill-profiles"),
       request<BillInstance[]>("/v1/obligations/bill-instances"),
       request<IncomeSource[]>("/v1/obligations/income-sources"),
@@ -84,7 +84,6 @@ export default function BillsPage() {
       request<CalendarItem[]>(
         `/v1/obligations/calendar?date_from=${isoOffset(-30)}&date_to=${isoOffset(120)}`,
       ),
-      request<Transaction[]>("/v1/ledger/transactions"),
       request<Account[]>("/v1/ledger/accounts"),
     ]);
     setProfiles(p);
@@ -93,7 +92,6 @@ export default function BillsPage() {
     setEvents(e);
     setDebts(d);
     setCalendar(c);
-    setTransactions(t);
     setAccounts(a);
   }, [request]);
   useEffect(() => {
@@ -210,6 +208,7 @@ export default function BillsPage() {
           lender: data.get("lender") || null,
           account_id: data.get("account_id") || null,
           balance_minor: amount(data, "balance"),
+          balance_as_of_date: data.get("balance_as_of_date"),
           apr_basis_points: Math.round(Number(data.get("apr")) * 100),
           minimum_payment_minor: amount(data, "minimum"),
           due_day: Number(data.get("due_day")),
@@ -228,15 +227,6 @@ export default function BillsPage() {
       "Upcoming bills, income, and debt minimums generated through the next 90 days without duplicates.",
     );
   }
-
-  const outflows = transactions.filter(
-    (item) =>
-      item.amount_minor < 0 && item.status === "posted" && !item.transfer_id,
-  );
-  const inflows = transactions.filter(
-    (item) =>
-      item.amount_minor > 0 && item.status === "posted" && !item.transfer_id,
-  );
 
   return (
     <div className="ledger-page obligations-page">
@@ -526,27 +516,7 @@ export default function BillsPage() {
                           );
                         }}
                       >
-                        <label>
-                          Observed payment
-                          <select name="transaction_id" required>
-                            <option value="">Select an outflow</option>
-                            {outflows
-                              .filter(
-                                (txn) =>
-                                  txn.currency_code === item.currency_code,
-                              )
-                              .map((txn) => (
-                                <option
-                                  key={txn.transaction_id}
-                                  value={txn.transaction_id}
-                                >
-                                  {txn.transaction_date} ·{" "}
-                                  {txn.payee || txn.account_name} ·{" "}
-                                  {money(txn.amount_minor, txn.currency_code)}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
+                        <TransactionPicker name="transaction_id" label="Observed payment" serverUrl={serverUrl} accessToken={session.access_token} direction="outflow" currencyCode={item.currency_code} help="Searches all posted, unlinked outflows—not only the newest 500." />
                         <label>
                           Amount to apply
                           <input name="amount" inputMode="decimal" required />
@@ -752,26 +722,7 @@ export default function BillsPage() {
                         );
                       }}
                     >
-                      <label>
-                        Observed inflow
-                        <select name="transaction_id" required>
-                          <option value="">Select an inflow</option>
-                          {inflows
-                            .filter(
-                              (txn) => txn.currency_code === item.currency_code,
-                            )
-                            .map((txn) => (
-                              <option
-                                key={txn.transaction_id}
-                                value={txn.transaction_id}
-                              >
-                                {txn.transaction_date} ·{" "}
-                                {txn.payee || txn.account_name} ·{" "}
-                                {money(txn.amount_minor, txn.currency_code)}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
+                      <TransactionPicker name="transaction_id" label="Observed inflow" serverUrl={serverUrl} accessToken={session.access_token} direction="inflow" currencyCode={item.currency_code} help="Searches all posted, unlinked inflows." />
                       <button className="button">
                         Mark received with evidence
                       </button>
@@ -815,6 +766,7 @@ export default function BillsPage() {
                     Balance
                     <input name="balance" inputMode="decimal" required />
                   </label>
+                  <label>Balance as of<input name="balance_as_of_date" type="date" defaultValue={new Date().toISOString().slice(0,10)} required /></label>
                   <label>
                     APR %
                     <input
@@ -879,11 +831,11 @@ export default function BillsPage() {
                       event.preventDefault();
                       const data = new FormData(event.currentTarget);
                       const selected = accounts.find((account) => account.account_id === data.get("account_id"));
-                      void act(`/v1/obligations/debts/${item.debt_id}`, { method: "PATCH", body: JSON.stringify({ name: data.get("name"), lender: data.get("lender") || null, account_id: data.get("account_id") || null, balance_minor: amount(data, "balance"), apr_basis_points: Math.round(Number(data.get("apr")) * 100), minimum_payment_minor: amount(data, "minimum"), due_day: Number(data.get("due_day")), next_due_date: data.get("next_date"), currency_code: selected?.currency_code ?? data.get("currency"), is_active: data.has("active") }) }, "Debt updated. Existing dated minimum-payment obligations retain their historical values.");
+                      void act(`/v1/obligations/debts/${item.debt_id}`, { method: "PATCH", body: JSON.stringify({ name: data.get("name"), lender: data.get("lender") || null, account_id: data.get("account_id") || null, balance_minor: amount(data, "balance"), balance_as_of_date: data.get("balance_as_of_date"), apr_basis_points: Math.round(Number(data.get("apr")) * 100), minimum_payment_minor: amount(data, "minimum"), due_day: Number(data.get("due_day")), next_due_date: data.get("next_date"), currency_code: selected?.currency_code ?? data.get("currency"), is_active: data.has("active") }) }, "Debt anchor updated and confirmed principal payments recalculated.");
                     }}>
                       <div className="form-grid"><label>Name<input name="name" defaultValue={item.name} required /></label><label>Lender<input name="lender" defaultValue={item.lender ?? ""} /></label><label>Related ledger account<select name="account_id" defaultValue={item.account_id ?? ""}><option value="">No related account</option>{accounts.map((account) => <option key={account.account_id} value={account.account_id}>{account.name} · {account.currency_code}</option>)}</select></label><label>Currency<select name="currency" defaultValue={item.currency_code}><option>USD</option><option>CAD</option><option>MXN</option></select></label></div>
-                      <div className="form-grid"><label>Balance<input name="balance" inputMode="decimal" defaultValue={(item.balance_minor / 100).toFixed(2)} required /></label><label>APR %<input name="apr" inputMode="decimal" defaultValue={(item.apr_basis_points / 100).toFixed(2)} required /></label><label>Minimum payment<input name="minimum" inputMode="decimal" defaultValue={(item.minimum_payment_minor / 100).toFixed(2)} required /></label><label>Due day<input name="due_day" type="number" min="1" max="31" defaultValue={item.due_day} required /></label><label>Next due<input name="next_date" type="date" defaultValue={item.next_due_date} required /></label><label className="checkbox-line"><input type="checkbox" name="active" defaultChecked={item.is_active} /> Active schedule</label></div>
-                      <button className="button primary" disabled={busy}>Save debt</button>
+                      <div className="form-grid"><label>Balance anchor<input name="balance" inputMode="decimal" defaultValue={(item.balance_anchor_minor / 100).toFixed(2)} required /></label><label>Balance as of<input name="balance_as_of_date" type="date" defaultValue={item.balance_as_of_date??new Date().toISOString().slice(0,10)} required /></label><label>APR %<input name="apr" inputMode="decimal" defaultValue={(item.apr_basis_points / 100).toFixed(2)} required /></label><label>Minimum payment<input name="minimum" inputMode="decimal" defaultValue={(item.minimum_payment_minor / 100).toFixed(2)} required /></label><label>Due day<input name="due_day" type="number" min="1" max="31" defaultValue={item.due_day} required /></label><label>Next due<input name="next_date" type="date" defaultValue={item.next_due_date} required /></label><label className="checkbox-line"><input type="checkbox" name="active" defaultChecked={item.is_active} /> Active schedule</label></div>
+                      <div className="row-actions"><button className="button primary" disabled={busy}>Save debt</button><button type="button" className="button" disabled={busy} onClick={() => void act(`/v1/obligations/debts/${item.debt_id}/recalculate`, {method:"POST"}, "Debt balance recalculated from confirmed principal payments after the balance date.")}>Recalculate payments</button></div>
                     </form>
                     <div className="danger-zone"><b>Remove this debt</b><p>Upcoming only removes unlinked future minimum-payment obligations and stops this schedule. Delete all removes the debt and every generated minimum-payment obligation and payment link. Ledger transactions are always preserved.</p><div className="row-actions"><button className="button" disabled={busy} onClick={() => { if (window.confirm(`Remove upcoming minimum-payment obligations for ${item.name} and stop this schedule? Linked payment history will remain.`)) void act(`/v1/obligations/debts/${item.debt_id}?scope=upcoming`, { method: "DELETE" }, "Upcoming debt minimums removed and the debt schedule deactivated; linked history was preserved."); }}>Remove upcoming only</button><button className="button danger" disabled={busy} onClick={() => { if (window.confirm(`Permanently delete ${item.name}, all generated minimum-payment history, and payment links? Ledger transactions will remain.`)) void act(`/v1/obligations/debts/${item.debt_id}?scope=all`, { method: "DELETE" }, "Debt and all of its minimum-payment history deleted; ledger transactions were preserved."); }}>Delete debt and all</button></div></div>
                   </div>}

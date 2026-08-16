@@ -10,6 +10,7 @@ import { PasskeyOptions, registrationCredential, registrationPublicKey } from ".
 
 type Device = { session_id: string; user_id: string; device_name: string | null; created_at: string; expires_at: string; is_current: boolean };
 type Passkey = { passkey_id: string; created_at: string; last_used_at: string | null };
+type ProxyLink = { linked: boolean; provider: string | null; email_at_link: string | null; created_at: string | null; last_used_at: string | null };
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -17,15 +18,18 @@ export default function ProfilePage() {
   const isOwner = me.role === "owner";
   const [devices, setDevices] = useState<Device[]>([]);
   const [passkeys, setPasskeys] = useState<Passkey[]>([]);
+  const [proxyLink, setProxyLink] = useState<ProxyLink | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    const [deviceList, passkeyList] = await Promise.all([
+    const [deviceList, passkeyList, linkedIdentity] = await Promise.all([
       apiRequest<Device[]>(serverUrl, "/v1/auth/sessions", {}, session.access_token),
       apiRequest<Passkey[]>(serverUrl, "/v1/auth/passkeys", {}, session.access_token),
+      apiRequest<ProxyLink>(serverUrl, "/v1/auth/proxy/link", {}, session.access_token),
     ]);
     setDevices(deviceList);
     setPasskeys(passkeyList);
+    setProxyLink(linkedIdentity);
   }, [serverUrl, session.access_token]);
   useEffect(() => { void load(); }, [load]);
 
@@ -71,6 +75,17 @@ export default function ProfilePage() {
     } finally { setBusy(false); }
   }
 
+  async function unlinkPangolin() {
+    if (!window.confirm("Remove your Pangolin identity link? Your current session and local password or passkeys will continue to work.")) return;
+    setBusy(true);
+    try {
+      await apiRequest(serverUrl, "/v1/auth/proxy/link", { method: "DELETE" }, session.access_token);
+      await load();
+      setNotice("Pangolin identity link removed. A future Pangolin sign-in must match your current email before it can link again.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Pangolin identity link could not be removed."); }
+    finally { setBusy(false); }
+  }
+
   return <div className="grid">
     {notice && <div className="span-12"><Notice title="Security update">{notice}</Notice></div>}
     <Panel span={7}>
@@ -93,6 +108,10 @@ export default function ProfilePage() {
       {passkeys.length === 0 && <p className="empty-inline">No passkeys enrolled yet.</p>}
       {passkeys.map((passkey) => <div className="row" key={passkey.passkey_id}><div><b>Passkey</b><small>{passkey.last_used_at ? `Last used ${new Date(passkey.last_used_at).toLocaleString()}` : `Added ${new Date(passkey.created_at).toLocaleString()}`}</small></div><button className="button compact" disabled={busy} onClick={() => removePasskey(passkey.passkey_id)}>Remove</button></div>)}
       <button className="button primary top-space" disabled={busy} onClick={addPasskey}>Add a passkey</button>
+    </Panel>
+    <Panel span={6}>
+      <p className="eyebrow">Proxy sign-in</p><h2>Pangolin identity</h2>
+      {!proxyLink?.linked?<p className="empty-inline">No Pangolin identity is linked. The first trusted Pangolin SSO sign-in can link only when its email matches this active member.</p>:<><div className="row"><div><b>{proxyLink.email_at_link}</b><small>{proxyLink.last_used_at?`Last used ${new Date(proxyLink.last_used_at).toLocaleString()}`:"Linked but not yet used"}</small></div><Pill tone="green">Linked</Pill></div><button className="button" disabled={busy} onClick={()=>void unlinkPangolin()}>Remove Pangolin link</button></>}
     </Panel>
     <Panel span={6}>
       <p className="eyebrow">Your devices</p><h2>Active sessions</h2>

@@ -7,6 +7,7 @@ import { authenticationCredential, authenticationPublicKey, PasskeyOptions } fro
 import { BrandWordmark } from "../components/brand";
 
 type ServerIdentity = { public_url: string; api_version: string };
+type ProxyIdentity = { available: boolean; email: string | null; display_name: string | null };
 const defaultServer = typeof window === "undefined" ? "https://localhost:8443" : window.location.origin;
 
 export default function ConnectionPage() {
@@ -17,6 +18,7 @@ export default function ConnectionPage() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [setupDemo, setSetupDemo] = useState(false);
+  const [proxyIdentity, setProxyIdentity] = useState<ProxyIdentity | null>(null);
 
   useEffect(() => {
     setResetToken(new URLSearchParams(window.location.search).get("reset_token") ?? "");
@@ -28,8 +30,12 @@ export default function ConnectionPage() {
   }, [router]);
 
   async function reconnect(url: string) {
-    const status = await apiRequest<{ setup_required: boolean }>(url, "/v1/setup/status");
+    const [status, proxy] = await Promise.all([
+      apiRequest<{ setup_required: boolean }>(url, "/v1/setup/status"),
+      apiRequest<ProxyIdentity>(url, "/v1/auth/proxy/status").catch(() => ({ available: false, email: null, display_name: null })),
+    ]);
     setServer({ url, setup_required: status.setup_required });
+    setProxyIdentity(proxy);
   }
 
   async function connect(event: FormEvent) {
@@ -77,6 +83,14 @@ export default function ConnectionPage() {
     } catch (error) { setNotice(error instanceof Error ? error.message : "Passkey sign-in failed."); setBusy(false); }
   }
 
+  async function proxyLogin() {
+    if (!server) return;
+    setBusy(true); setNotice("");
+    try {
+      await acceptSession(await apiRequest<Session>(server.url, "/v1/auth/proxy/login", { method: "POST", body: JSON.stringify({ device_name: "Web browser · Pangolin" }) }));
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Pangolin sign-in failed."); setBusy(false); }
+  }
+
   async function requestReset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!server) return; setBusy(true);
     try { await apiRequest<void>(server.url, "/v1/auth/password-reset/request", { method: "POST", body: JSON.stringify({ email: new FormData(event.currentTarget).get("email") }) }); setNotice("If email recovery is configured for that account, a reset message has been sent."); }
@@ -95,6 +109,6 @@ export default function ConnectionPage() {
     <section className="auth-panel"><p className="eyebrow">Tallystead · Local server</p><h2>{!server ? "Connect to your household" : server.setup_required ? "Create your household" : "Welcome back"}</h2>{notice && <p className="status-message" role="status">{notice}</p>}
       {!server && <form onSubmit={connect}><label>Server URL<input value={serverInput} onChange={(event) => setServerInput(event.target.value)} placeholder="https://tallystead.home.arpa" required /></label><p className="field-help">Use the secure address shown by your Tallystead server.</p><button className="button primary" disabled={busy}>{busy ? "Connecting…" : "Connect securely"}</button></form>}
       {server?.setup_required && <form onSubmit={setup}><label>Household name<input name="householdName" required /></label><label>Your name<input name="displayName" required /></label><label>Email address<input name="email" type="email" required /></label><label>Password<input name="password" type="password" minLength={12} required /></label><label className="check-line"><input type="checkbox" checked={setupDemo} onChange={(event) => setSetupDemo(event.target.checked)} /> Start with clearly fictional demo data</label>{setupDemo && <><label>Demo reference date<input name="demoReferenceDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label><label>Fixture size<select name="demoVolume" defaultValue="realistic"><option value="realistic">Realistic · nine months</option><option value="smoke">Smoke test · two months</option></select></label><p className="field-help">All names, values, imports, and documents are generated locally and marked as fictional.</p></>}<button className="button primary" disabled={busy}>Create local household</button></form>}
-      {server && !server.setup_required && <><form onSubmit={login}><label>Email address<input name="email" type="email" required /></label><label>Password<input name="password" type="password" required /></label><button className="button primary" disabled={busy}>Sign in with password</button><button type="button" className="button" disabled={busy} onClick={passkeyLogin}>Sign in with a passkey</button></form><details open={Boolean(resetToken)}><summary>Password recovery</summary><form onSubmit={requestReset}><label>Email address<input name="email" type="email" required /></label><button className="button">Email a reset link</button></form>{resetToken && <form onSubmit={finishReset}><label>New password<input name="password" type="password" minLength={12} required /></label><button className="button primary">Set new password</button></form>}<p className="field-help">A household Owner can also recover your account locally.</p></details></>}
+      {server && !server.setup_required && <>{proxyIdentity?.available&&<div className="proxy-sign-in"><p><b>{proxyIdentity.display_name||proxyIdentity.email}</b><br/><span className="field-help">Authenticated by Pangolin. A matching active Tallystead member is required.</span></p><button type="button" className="button primary" disabled={busy} onClick={()=>void proxyLogin()}>Continue with Pangolin</button></div>}<form onSubmit={login}><label>Email address<input name="email" type="email" required /></label><label>Password<input name="password" type="password" required /></label><button className="button primary" disabled={busy}>Sign in with password</button><button type="button" className="button" disabled={busy} onClick={passkeyLogin}>Sign in with a passkey</button></form><details open={Boolean(resetToken)}><summary>Password recovery</summary><form onSubmit={requestReset}><label>Email address<input name="email" type="email" required /></label><button className="button">Email a reset link</button></form>{resetToken && <form onSubmit={finishReset}><label>New password<input name="password" type="password" minLength={12} required /></label><button className="button primary">Set new password</button></form>}<p className="field-help">A household Owner can also recover your account locally.</p></details></>}
     </section></main>;
 }

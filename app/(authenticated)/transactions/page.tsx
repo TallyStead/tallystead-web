@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useAppSession } from "../../../components/app-shell";
 import SplitEditor, { SplitDraft } from "../../../components/split-editor";
 import RecurringProfileBuilder from "../../../components/recurring-profile-builder";
@@ -24,6 +24,9 @@ type Submit = <T>(
   message: string,
 ) => Promise<T | null>;
 type LedgerTab = "activity" | "add" | "accounts" | "organization";
+type TransactionPage = { items: Transaction[]; page: number; page_size: number; total_items: number; total_pages: number };
+type TransactionFilters = { search: string; account_id: string; category_id: string; transaction_status: string; direction: string; reconciled: string; date_from: string; date_to: string };
+const emptyTransactionFilters: TransactionFilters = { search: "", account_id: "", category_id: "", transaction_status: "", direction: "", reconciled: "", date_from: "", date_to: "" };
 
 function AddTransaction({
   accounts,
@@ -352,6 +355,9 @@ function TransactionDetailPanel({
   submit,
   refresh,
   close,
+  previous,
+  next,
+  position,
 }: {
   detail: TransactionDetail;
   accounts: Account[];
@@ -362,8 +368,23 @@ function TransactionDetailPanel({
   submit: Submit;
   refresh: () => Promise<void>;
   close: () => void;
+  previous: (() => void) | null;
+  next: (() => void) | null;
+  position: string;
 }) {
   const item = detail.transaction;
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { const previous = document.activeElement as HTMLElement | null; closeButtonRef.current?.focus(); return () => previous?.focus(); }, []);
+  function trapFocus(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab" || !modalRef.current) return;
+    const controls = Array.from(modalRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])'));
+    if (!controls.length) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
   const direction = item.amount_minor < 0 ? "outflow" : "inflow";
   const [splits, setSplits] = useState<SplitDraft[]>(
     item.splits.length
@@ -487,13 +508,18 @@ function TransactionDetailPanel({
     if (result) await refresh();
   }
   return (
+    <div className="transaction-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <div ref={modalRef} className="transaction-modal" role="dialog" aria-modal="true" aria-labelledby="transaction-detail-title" onKeyDown={trapFocus}>
     <Panel span={12} className="transaction-detail">
       <div className="title-with-status">
         <div>
           <p className="eyebrow">Transaction detail</p>
-          <h2>{item.payee || item.merchant_name || "Untitled transaction"}</h2>
+          <h2 id="transaction-detail-title">{item.payee || item.merchant_name || "Untitled transaction"}</h2>
         </div>
         <div className="row-actions">
+          <button className="button compact" disabled={!previous || busy} onClick={previous ?? undefined} aria-label="Previous transaction">←</button>
+          <small>{position}</small>
+          <button className="button compact" disabled={!next || busy} onClick={next ?? undefined} aria-label="Next transaction">→</button>
           <Pill
             tone={
               item.status === "voided"
@@ -506,7 +532,7 @@ function TransactionDetailPanel({
             {item.status}
           </Pill>
           {item.reconciled_at && <Pill>Reconciled</Pill>}
-          <button className="button compact" onClick={close}>
+          <button ref={closeButtonRef} className="button compact" onClick={close}>
             Close
           </button>
         </div>
@@ -546,7 +572,7 @@ function TransactionDetailPanel({
               </div>
             ))
           ) : (
-            <p className="empty-inline">Uncategorized</p>
+            <p className="empty-inline">{item.activity_type === "debt_payment" ? "Debt payment" : "Uncategorized"}</p>
           )}
           {canWrite &&
             !item.reconciled_at &&
@@ -780,6 +806,8 @@ function TransactionDetailPanel({
         </section>
       </div>
     </Panel>
+    </div>
+    </div>
   );
 }
 
@@ -790,12 +818,20 @@ export default function TransactionsPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactionTotal, setTransactionTotal] = useState(0);
+  const [transactionPages, setTransactionPages] = useState(1);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [filters, setFilters] = useState<TransactionFilters>(emptyTransactionFilters);
+  const [filterDraft, setFilterDraft] = useState<TransactionFilters>(emptyTransactionFilters);
   const [detail, setDetail] = useState<TransactionDetail | null>(null);
   const [balance, setBalance] = useState<BalanceExplanation | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<LedgerTab>("activity");
   const load = useCallback(async () => {
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
     const [a, c, m, t] = await Promise.all([
       apiRequest<Account[]>(
         serverUrl,
@@ -815,9 +851,9 @@ export default function TransactionsPage() {
         {},
         session.access_token,
       ),
-      apiRequest<Transaction[]>(
+      apiRequest<TransactionPage>(
         serverUrl,
-        "/v1/ledger/transactions",
+        `/v1/ledger/transactions/page?${params.toString()}`,
         {},
         session.access_token,
       ),
@@ -825,11 +861,27 @@ export default function TransactionsPage() {
     setAccounts(a);
     setCategories(c);
     setMerchants(m);
-    setTransactions(t);
-  }, [serverUrl, session.access_token]);
+    setTransactions(t.items);
+    setTransactionTotal(t.total_items);
+    setTransactionPages(t.total_pages);
+    if (t.page !== page) setPage(t.page);
+  }, [filters, page, pageSize, serverUrl, session.access_token]);
   useEffect(() => {
     void load().catch((error: Error) => setNotice(error.message));
   }, [load]);
+  useEffect(() => {
+    if (!detail) return;
+    function keyboard(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (event.key === "Escape") { setDetail(null); return; }
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      const index = transactions.findIndex((item) => item.transaction_id === detail?.transaction.transaction_id);
+      if (event.key === "ArrowLeft" && index > 0) void selectTransaction(transactions[index - 1].transaction_id);
+      if (event.key === "ArrowRight" && index >= 0 && index < transactions.length - 1) void selectTransaction(transactions[index + 1].transaction_id);
+    }
+    window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  }, [detail, transactions]);
   const submit: Submit = async <T,>(
     path: string,
     init: RequestInit,
@@ -883,6 +935,18 @@ export default function TransactionsPage() {
         session.access_token,
       ),
     );
+  }
+  function applyTransactionFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPage(1);
+    setFilters(filterDraft);
+    setDetail(null);
+  }
+  function clearTransactionFilters() {
+    setFilterDraft(emptyTransactionFilters);
+    setFilters(emptyTransactionFilters);
+    setPage(1);
+    setDetail(null);
   }
   async function explain(
     account: Account,
@@ -965,6 +1029,11 @@ export default function TransactionsPage() {
   async function updateAccount(event: FormEvent<HTMLFormElement>, account: Account) {
     event.preventDefault(); const data = new FormData(event.currentTarget);
     await patchResource(`/v1/ledger/accounts/${account.account_id}`, { name: data.get("name"), ownership_scope: data.get("ownership_scope"), balance_nature: data.get("balance_nature"), liquidity: data.get("liquidity"), tax_treatment: data.get("tax_treatment"), institution: data.get("institution") || null, masked_identifier: data.get("masked_identifier") || null, include_in_planner: data.has("include_in_planner"), include_in_net_worth: data.has("include_in_net_worth") }, "Account classification updated.");
+  }
+  async function deleteAccount(account: Account) {
+    if (!window.confirm(`Delete “${account.name}”? Only an empty account with no financial history can be deleted.`)) return;
+    await submit<void>(`/v1/ledger/accounts/${account.account_id}`, { method: "DELETE" }, "Empty account deleted.");
+    await refresh();
   }
   async function addValuation(event: FormEvent<HTMLFormElement>, account: Account) {
     event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const value = minorUnits(data.get("value")?.toString() ?? ""); if (value === null || value < 0) return setNotice("Enter a non-negative valuation.");
@@ -1056,21 +1125,7 @@ export default function TransactionsPage() {
           ) : null,
         )}
       </nav>
-      {activeTab === "activity" && detail && (
-        <div className="grid">
-          <TransactionDetailPanel
-            detail={detail}
-            accounts={accounts}
-            categories={categories}
-            merchants={merchants}
-            canWrite={canWrite}
-            busy={busy}
-            submit={submit}
-            refresh={refresh}
-            close={() => setDetail(null)}
-          />
-        </div>
-      )}
+      {activeTab === "activity" && detail && (() => { const index = transactions.findIndex((item) => item.transaction_id === detail.transaction.transaction_id); return <TransactionDetailPanel key={detail.transaction.transaction_id} detail={detail} accounts={accounts} categories={categories} merchants={merchants} canWrite={canWrite} busy={busy} submit={submit} refresh={refresh} close={() => setDetail(null)} previous={index > 0 ? () => void selectTransaction(transactions[index - 1].transaction_id) : null} next={index >= 0 && index < transactions.length - 1 ? () => void selectTransaction(transactions[index + 1].transaction_id) : null} position={index >= 0 ? `${index + 1} of ${transactions.length} on this page` : "Filtered transaction"} />; })()}
       {activeTab === "activity" && (
         <div className="grid">
           <Panel span={8}>
@@ -1079,15 +1134,25 @@ export default function TransactionsPage() {
                 <p className="eyebrow">Observed money movement</p>
                 <h2>Transactions</h2>
               </div>
-              <Pill tone="blue">{transactions.length} recorded</Pill>
+              <Pill tone="blue">{transactionTotal} matching</Pill>
             </div>
+            <form className="transaction-filters" onSubmit={applyTransactionFilters}>
+              <label className="transaction-search">Search transactions<input type="search" value={filterDraft.search} onChange={(event) => setFilterDraft({ ...filterDraft, search: event.target.value })} placeholder="Payee, memo, account, merchant, category, or source" /></label>
+              <label>Account<select value={filterDraft.account_id} onChange={(event) => setFilterDraft({ ...filterDraft, account_id: event.target.value })}><option value="">All accounts</option>{accounts.map((account) => <option value={account.account_id} key={account.account_id}>{account.name}</option>)}</select></label>
+              <label>Category<select value={filterDraft.category_id} onChange={(event) => setFilterDraft({ ...filterDraft, category_id: event.target.value })}><option value="">All categories</option>{categories.map((category) => <option value={category.category_id} key={category.category_id}>{category.name}</option>)}</select></label>
+              <label>Status<select value={filterDraft.transaction_status} onChange={(event) => setFilterDraft({ ...filterDraft, transaction_status: event.target.value })}><option value="">All statuses</option><option value="posted">Posted</option><option value="pending">Pending</option><option value="voided">Voided</option></select></label>
+              <label>Direction<select value={filterDraft.direction} onChange={(event) => setFilterDraft({ ...filterDraft, direction: event.target.value })}><option value="">Money in and out</option><option value="outflow">Money out</option><option value="inflow">Money in</option></select></label>
+              <label>Reconciliation<select value={filterDraft.reconciled} onChange={(event) => setFilterDraft({ ...filterDraft, reconciled: event.target.value })}><option value="">Any</option><option value="true">Reconciled</option><option value="false">Not reconciled</option></select></label>
+              <label>From<input type="date" value={filterDraft.date_from} onChange={(event) => setFilterDraft({ ...filterDraft, date_from: event.target.value })} /></label>
+              <label>Through<input type="date" value={filterDraft.date_to} onChange={(event) => setFilterDraft({ ...filterDraft, date_to: event.target.value })} /></label>
+              <div className="transaction-filter-actions"><button className="button primary" disabled={busy}>Apply filters</button><button className="button" type="button" disabled={busy} onClick={clearTransactionFilters}>Clear</button></div>
+            </form>
             {transactions.length === 0 ? (
-              <EmptyState title="No transactions yet">
-                Create an account, then record the household’s first transaction
-                or transfer.
+              <EmptyState title={Object.values(filters).some(Boolean) ? "No matching transactions" : "No transactions yet"}>
+                {transactionTotal === 0 && Object.values(filters).some(Boolean) ? "No transactions match the current search and filters." : "Create an account, then record the household’s first transaction or transfer."}
               </EmptyState>
             ) : (
-              <div className="transaction-list">
+              <><div className="transaction-list">
                 {transactions.map((item) => (
                   <button
                     className="transaction-row transaction-button"
@@ -1127,7 +1192,7 @@ export default function TransactionsPage() {
                     </div>
                   </button>
                 ))}
-              </div>
+              </div><nav className="transaction-pagination" aria-label="Transaction pages"><button className="button compact" disabled={busy || page <= 1} onClick={() => { setDetail(null); setPage((value) => Math.max(1, value - 1)); }}>Previous</button><span>Page <b>{page}</b> of <b>{transactionPages}</b></span><label>Rows<select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label><button className="button compact" disabled={busy || page >= transactionPages} onClick={() => { setDetail(null); setPage((value) => Math.min(transactionPages, value + 1)); }}>Next</button></nav></>
             )}
           </Panel>
           <Panel span={4}>
@@ -1287,7 +1352,7 @@ export default function TransactionsPage() {
                       <button className="button primary" disabled={busy}>Save classification</button>
                     </form>
                     <form className="valuation-form" onSubmit={(event) => addValuation(event, account)}><b>Record market or statement value</b><small>Use this for investments, retirement, HSA/FSA, property, vehicles, and other valued accounts. It does not create a transaction.</small><div className="form-grid"><label>Date<input type="date" name="valuation_date" defaultValue={today()} required /></label><label>Value<input name="value" inputMode="decimal" required /></label><label className="full-field">Note<input name="note" placeholder="Statement or valuation source" /></label></div><button className="button" disabled={busy}>Record valuation</button></form>
-                    <div className="row-actions"><button className="button compact" onClick={() => patchResource(`/v1/ledger/accounts/${account.account_id}`, { is_archived: !account.is_archived }, account.is_archived ? "Account restored." : "Account archived; history remains intact.")}>{account.is_archived ? "Restore" : "Archive"}</button></div>
+                    <div className="row-actions"><button className="button compact" onClick={() => patchResource(`/v1/ledger/accounts/${account.account_id}`, { is_archived: !account.is_archived }, account.is_archived ? "Account restored." : "Account archived; history remains intact.")}>{account.is_archived ? "Restore" : "Archive"}</button><button className="button compact danger" disabled={busy} onClick={() => void deleteAccount(account)}>Delete empty account</button></div>
                   </div>
                 </details>
               ))}

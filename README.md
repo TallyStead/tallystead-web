@@ -21,9 +21,9 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:3000`. Enter the URL of the Tallystead server when prompted. The server must allow the web client's origin when they are served from different origins during development.
+Open `http://localhost:3000`. The client first checks its own origin. If the API is hosted separately during development, use the fallback server URL form; no server-side browser-origin allowlist is required.
 
-For the normal self-hosted deployment, Caddy serves this client and the API from the same origin. A separate source repository does not imply a separate runtime host.
+For the normal self-hosted deployment, Caddy serves this client and the API from the same origin, so no connection screen appears. A separate source repository does not imply a separate runtime host.
 
 ## Quality checks
 

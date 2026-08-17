@@ -20,11 +20,10 @@ export async function apiRequest<T>(serverUrl: string, path: string, init: Reque
 }
 
 export function savedConnection(): { serverUrl: string; session: Session | null } | null {
-  const serverUrl = window.localStorage.getItem(SERVER_URL_KEY) ?? window.localStorage.getItem(LEGACY_SERVER_URL_KEY);
-  if (!serverUrl) return null;
+  const serverUrl = window.localStorage.getItem(SERVER_URL_KEY) ?? window.localStorage.getItem(LEGACY_SERVER_URL_KEY) ?? window.location.origin;
   const saved = window.localStorage.getItem(SESSION_KEY) ?? window.localStorage.getItem(LEGACY_SESSION_KEY);
-  window.localStorage.setItem(SERVER_URL_KEY, serverUrl);
   if (saved) window.localStorage.setItem(SESSION_KEY, saved);
+  window.localStorage.setItem(SERVER_URL_KEY, serverUrl);
   window.localStorage.removeItem(LEGACY_SERVER_URL_KEY);
   window.localStorage.removeItem(LEGACY_SESSION_KEY);
   return { serverUrl, session: saved ? JSON.parse(saved) as Session : null };

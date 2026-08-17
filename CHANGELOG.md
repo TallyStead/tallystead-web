@@ -2,6 +2,17 @@
 
 All notable changes to the independently released Tallystead browser client are recorded here.
 
+## [0.2.2] - Unreleased
+
+### Changed
+
+- The bundled client automatically uses the origin from which it was loaded for all API requests and no longer asks the household to enter or retain a separate server URL.
+- A failed initial connection keeps the current address visible and offers a retry without redirecting users to a network-configuration workflow.
+
+### Compatibility
+
+- Intended for Tallystead server `0.2.2`, whose Caddy/API path is host-neutral while preserving trusted-proxy authentication boundaries.
+
 ## [0.2.1] - Unreleased
 
 ### Changed

@@ -24,6 +24,8 @@ Browser or future native client
 
 Keeping the web client and API on one origin simplifies passkeys, sessions, networking, and local-first operation. Independent source repositories do not require independent public hosts.
 
+The bundled client derives the API base from `window.location.origin`. A separately hosted development or standalone client may select and retain another Tallystead API URL. The server uses bearer authentication rather than ambient cross-origin cookies, so this fallback does not require a configured CORS origin list.
+
 ## Release relationship
 
 The web repository publishes `tallystead-web` using immutable semantic-version tags and records the resulting image digest. The server repository owns the installable release bundle and pins an exact tested web image version or digest.
@@ -52,4 +54,3 @@ projects/
 ```
 
 The web client can run with `npm run dev`. The server repository may optionally provide a developer Compose override that builds from `../tallystead-web`, while supported releases consume an immutable published image.
-
